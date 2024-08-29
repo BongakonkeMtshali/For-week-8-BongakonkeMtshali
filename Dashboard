@@ -1,0 +1,100 @@
+import dash
+from dash import html, dcc, dash_table
+from dash.dependencies import Input, Output
+from sqlalchemy import create_engine, inspect
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+
+# Create a connection to the SQL database
+engine = create_engine('sqlite:///C:/Users/mtsha/waterqualitydb/waterqualitydb.db')
+
+# Initialize the Dash app
+app = dash.Dash(__name__)
+
+# Use SQLAlchemy's Inspector to get table names
+inspector = inspect(engine)
+table_names = inspector.get_table_names()
+
+# Define the layout of the dashboard
+app.layout = html.Div([
+    html.H1('Excel Data Dashboard', style={'textAlign': 'center'}),
+    
+    dcc.Dropdown(
+        id='table-dropdown',
+        options=[{'label': name, 'value': name} for name in table_names],
+        value=table_names[0],  # Default value
+        clearable=False,
+        style={'width': '50%', 'margin': 'auto'}
+    ),
+    
+    html.Div([
+        dash_table.DataTable(
+            id='data-table',
+            columns=[],
+            data=[],
+            style_table={'overflowX': 'auto'},
+            style_cell={'textAlign': 'left'},
+            style_header={'backgroundColor': '#f8f9fa', 'fontWeight': 'bold'},
+            page_size=10
+        )
+    ], style={'margin': '20px'}),
+    
+    html.Div([
+        dcc.Graph(id='line-chart', style={'height': '400px'}),
+        dcc.Graph(id='bar-chart', style={'height': '400px'}),
+        dcc.Graph(id='pie-chart', style={'height': '400px'})
+    ], style={'display': 'flex', 'justifyContent': 'space-around', 'margin': '20px'}),
+    
+])
+
+@app.callback(
+    [Output('data-table', 'columns'),
+     Output('data-table', 'data'),
+     Output('line-chart', 'figure'),
+     Output('bar-chart', 'figure'),
+     Output('pie-chart', 'figure')],
+    [Input('table-dropdown', 'value')]
+)
+def update_content(selected_table):
+    # Load data from the selected table
+    df = pd.read_sql(f"SELECT * FROM {selected_table}", con=engine)
+
+    # Update Data Table
+    columns = [{"name": i, "id": i} for i in df.columns]
+    data = df.to_dict('records')
+    
+    # Initialize charts
+    line_fig = go.Figure()
+    bar_fig = go.Figure()
+    pie_fig = go.Figure()
+
+    # Check if table has numeric columns
+    numeric_cols = df.select_dtypes(include=['number']).columns
+    categorical_cols = df.select_dtypes(include=['object']).columns
+
+    # Generate Line Chart
+    if len(numeric_cols) >= 2:
+        line_fig = px.line(df, x=numeric_cols[0], y=numeric_cols[1:], title=f'Line Chart for {selected_table}')
+        line_fig.update_layout(plot_bgcolor='rgba(0,0,0,0)', xaxis_title=numeric_cols[0], yaxis_title='Values')
+
+    # Generate Bar Chart
+    if len(numeric_cols) >= 2:
+        bar_fig = px.bar(df, x=numeric_cols[0], y=numeric_cols[1:], title=f'Bar Chart for {selected_table}')
+        bar_fig.update_layout(plot_bgcolor='rgba(0,0,0,0)', xaxis_title=numeric_cols[0], yaxis_title='Values')
+
+    # Generate Pie Chart
+    if len(categorical_cols) > 0 and len(numeric_cols) > 0:
+        # Replace LocationID with names
+        if 'LocationID' in df.columns and 'LocationName' in df.columns:
+            df['LocationName'] = df['LocationID'].map({1: 'Gauteng', 2: 'Cape Town'})
+            pie_fig = px.pie(df, names='LocationName', values=numeric_cols[0], title=f'Pie Chart for {selected_table}')
+        else:
+            pie_fig = px.pie(df, names=categorical_cols[0], values=numeric_cols[0], title=f'Pie Chart for {selected_table}')
+        pie_fig.update_layout(plot_bgcolor='rgba(0,0,0,0)')
+
+    return columns, data, line_fig, bar_fig, pie_fig
+
+# Run the app
+if __name__ == '__main__':
+    app.run_server(debug=True)
